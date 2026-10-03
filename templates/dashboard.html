@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Smart Medicine Reminder</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f2f5; padding: 20px; }
+        .container { max-width: 750px; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 15px 25px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); }
+        .card { background: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); margin-top: 20px; }
+        h3 { color: #2c3e50; margin-bottom: 15px; }
+        .form-row { display: flex; gap: 10px; flex-wrap: wrap; }
+        input { flex: 1; min-width: 150px; padding: 10px; border: 1px solid #cbd5e0; border-radius: 6px; }
+        button { padding: 10px 18px; background-color: #27ae60; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #219150; }
+        button.btn-danger { background-color: #e74c3c; }
+        button.btn-danger:hover { background-color: #c0392b; }
+        button.btn-edit { background-color: #f39c12; }
+        button.btn-edit:hover { background-color: #d68910; }
+        .medicine-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #edf2f7; }
+        .logout-btn { background-color: #e74c3c; text-decoration: none; color: white; padding: 8px 15px; border-radius: 6px; font-size: 14px; font-weight: bold; }
+        .actions button { margin-left: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>Welcome, {{ username }} 👋</h2>
+            <a href="/logout" class="logout-btn">Logout</a>
+        </div>
+
+        <div class="card">
+            <h3 id="form-title">Add New Medicine</h3>
+            <input type="hidden" id="med-id">
+            <div class="form-row">
+                <input type="text" id="med-name" placeholder="Medicine Name">
+                <input type="text" id="med-dosage" placeholder="Dosage (e.g., 1 tablet)">
+                <input type="time" id="med-time">
+                <button onclick="saveMedicine()" id="save-btn">Add</button>
+            </div>
+            <p style="font-size:12px; color:#718096; margin-top:8px;">Tip: Page ah open panna aprom oru thadava click pannunga, aprom than sound varum.</p>
+        </div>
+
+        <div class="card">
+            <h3>Your Daily Schedule</h3>
+            <div id="medicine-list"><p>Loading medicines...</p></div>
+        </div>
+    </div>
+
+    <script>
+        let allMedicines = [];
+        let audioContext;
+
+        function initAudio() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        // Page la first click panna audio enable aagum
+        document.addEventListener('click', initAudio, { once: true });
+
+        function playSound() {
+            try {
+                initAudio();
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume();
+                }
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                gainNode.gain.setValueAtTime(1, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + 0.5);
+            } catch(e) {
+                console.log("Audio error", e);
+            }
+        }
+
+        // Test sound button ku - delete pannalam
+        function testSound() { playSound(); }
+
+        async function fetchMedicines() {
+            const res = await fetch('/api/medicines?t=' + new Date().getTime());
+            allMedicines = await res.json();
+            const listDiv = document.getElementById('medicine-list');
+            if (allMedicines.length === 0) {
+                listDiv.innerHTML = '<p style="color: #718096;">No medicines added yet.</p>';
+                return;
+            }
+            listDiv.innerHTML = '';
+            allMedicines.forEach(med => {
+                const item = document.createElement('div');
+                item.className = 'medicine-item';
+                const info = document.createElement('div');
+                info.innerHTML = `<strong>💊 ${escapeHtml(med.name)}</strong> - ${escapeHtml(med.dosage)} <br><small style="color: #4a5568;">⏰ Reminder Time: <strong>${escapeHtml(med.time)}</strong></small>`;
+                const actions = document.createElement('div');
+                actions.className = 'actions';
+                const editBtn = document.createElement('button');
+                editBtn.className = 'btn-edit';
+                editBtn.innerText = 'Edit';
+                editBtn.onclick = () => editMode(med.id, med.name, med.dosage, med.time);
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn-danger';
+                deleteBtn.innerText = 'Delete';
+                deleteBtn.onclick = () => deleteMedicine(med.id);
+                actions.appendChild(editBtn);
+                actions.appendChild(deleteBtn);
+                item.appendChild(info);
+                item.appendChild(actions);
+                listDiv.appendChild(item);
+            });
+        }
+
+        function escapeHtml(text) {
+            return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+        }
+
+        async function saveMedicine() {
+            const id = document.getElementById('med-id').value;
+            const name = document.getElementById('med-name').value;
+            const dosage = document.getElementById('med-dosage').value;
+            const time = document.getElementById('med-time').value;
+            if (!name || !dosage || !time) { alert('Please fill all fields'); return; }
+            const method = id ? 'PUT' : 'POST';
+            const url = id ? `/api/medicines/${id}` : '/api/medicines';
+            const res = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, dosage, time })
+            });
+            if (res.ok) { resetForm(); await fetchMedicines(); }
+        }
+
+        function editMode(id, name, dosage, time) {
+            document.getElementById('med-id').value = id;
+            document.getElementById('med-name').value = name;
+            document.getElementById('med-dosage').value = dosage;
+            document.getElementById('med-time').value = time;
+            document.getElementById('form-title').innerText = 'Edit Medicine';
+            document.getElementById('save-btn').innerText = 'Update';
+        }
+
+        function resetForm() {
+            document.getElementById('med-id').value = '';
+            document.getElementById('med-name').value = '';
+            document.getElementById('med-dosage').value = '';
+            document.getElementById('med-time').value = '';
+            document.getElementById('form-title').innerText = 'Add New Medicine';
+            document.getElementById('save-btn').innerText = 'Add';
+        }
+
+        async function deleteMedicine(id) {
+            if (confirm('Delete this reminder?')) {
+                const res = await fetch(`/api/medicines/${id}`, { method: 'DELETE' });
+                if (res.ok) { await fetchMedicines(); }
+            }
+        }
+
+        setInterval(() => {
+            const now = new Date();
+            const currentTime = now.toTimeString().slice(0, 5);
+            allMedicines.forEach(med => {
+                if (med.time === currentTime && !med.alerted) {
+                    let count = 0;
+                    let beepInterval = setInterval(() => {
+                        playSound();
+                        count++;
+                        if (count >= 6) clearInterval(beepInterval);
+                    }, 500);
+
+                    if ('speechSynthesis' in window) {
+                        const utter = new SpeechSynthesisUtterance(`Time to take your ${med.name}`);
+                        window.speechSynthesis.speak(utter);
+                    }
+
+                    alert(`⏰ REMINDER: Time to take your ${med.name} (${med.dosage})!`);
+                    med.alerted = true;
+                    setTimeout(() => { med.alerted = false; }, 60000);
+                }
+            });
+        }, 5000);
+
+        fetchMedicines();
+    </script>
+</body>
+</html>
